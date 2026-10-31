@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function boundedText(v, maximum) { return v is string && v.size() <= maximum; }
+    function validEvent(e) {
+      return e is map && e.keys().hasOnly(['name','type','date','location','guests','budgetMinor','currency','contingencyPercent','style','cultural','accessibility','dietary','priorities'])
+        && boundedText(e.name,100) && e.name.size() >= 2
+        && e.type in ['wedding','birthday','anniversary','community']
+        && e.date is string && e.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && boundedText(e.location,160) && e.location.size() >= 2
+        && e.guests is int && e.guests >= 1 && e.guests <= 100000
+        && e.budgetMinor is int && e.budgetMinor > 0 && e.budgetMinor <= 100000000000
+        && e.currency in ['INR','USD','EUR','GBP','JPY']
+        && e.contingencyPercent is int && e.contingencyPercent >= 0 && e.contingencyPercent <= 30
+        && boundedText(e.style,200) && boundedText(e.cultural,600)
+        && boundedText(e.accessibility,500) && boundedText(e.dietary,500)
+        && e.priorities is list && e.priorities.size() <= 5;
+    }
+    function validPlan(p) {
+      return p is map && p.keys().hasOnly(['summary','ideas','budget','tasks','vendors','risks','assumptions','missingInfo','alternatives'])
+        && boundedText(p.summary,1500) && p.summary.size() > 0
+        && p.ideas is list && p.ideas.size() > 0 && p.ideas.size() <= 12
+        && p.budget is list && p.budget.size() > 0 && p.budget.size() <= 20
+        && p.tasks is list && p.tasks.size() > 0 && p.tasks.size() <= 80
+        && p.vendors is list && p.vendors.size() <= 20
+        && p.risks is list && p.risks.size() <= 20
+        && p.assumptions is list && p.assumptions.size() <= 12
+        && p.missingInfo is list && p.missingInfo.size() <= 12
+        && p.alternatives is list && p.alternatives.size() <= 12;
+    }
+    function validWorkspace(w) {
+      return w is map && w.keys().hasOnly(['snapshot','revisions'])
+        && w.snapshot is map && w.snapshot.keys().hasOnly(['event','plan','source','scenarioNote'])
+        && w.snapshot.source in ['demo','gemini'] && boundedText(w.snapshot.scenarioNote,800)
+        && validEvent(w.snapshot.event) && validPlan(w.snapshot.plan)
+        && w.revisions is list && w.revisions.size() <= 30;
+    }
+    function validDocument(d, uid) {
+      return d.keys().hasOnly(['ownerId','schemaVersion','version','workspace','createdAt','updatedAt'])
+        && d.ownerId == uid && d.schemaVersion == 1
+        && d.version is int && d.version >= 1 && d.version <= 1000000
+        && d.createdAt is timestamp && d.updatedAt == request.time
+        && validWorkspace(d.workspace);
+    }
+    match /users/{uid}/events/{eventId} {
+      allow get, list: if owner(uid);
+      allow create: if owner(uid) && validDocument(request.resource.data, uid)
+        && request.resource.data.version == 1 && request.resource.data.createdAt == request.time;
+      allow update: if owner(uid) && resource.data.ownerId == uid && validDocument(request.resource.data, uid)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.version == resource.data.version + 1
+        && request.resource.data.workspace.revisions.size() >= resource.data.workspace.revisions.size();
+      allow delete: if owner(uid) && resource.data.ownerId == uid;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

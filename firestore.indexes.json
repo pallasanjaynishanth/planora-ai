@@ -1,0 +1,6 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "events", "fieldPath": "workspace", "indexes": [] }
+  ]
+}
